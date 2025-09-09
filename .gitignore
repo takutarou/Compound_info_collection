@@ -60,13 +60,15 @@ venv.bak/
 .LSOverride
 
 # Project specific
-data/output/*.csv
-data/output/*.json
+data/input/*
+data/output/*
 data/cache/*
 *.log
 temp/
 tmp/
+eye_drop_env/
 
 # Keep directories but ignore contents
+!data/input/.gitkeep
 !data/output/.gitkeep
 !data/cache/.gitkeep
