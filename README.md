@@ -12,6 +12,20 @@ source eye_drop_env/bin/activate
 pip install -r requirements.txt
 ```
 
+## データ準備
+
+### ExcelからJSONへの変換（前処理）
+
+```bash
+source eye_drop_env/bin/activate
+python3 scripts/excel_to_json.py --input data/input/your_file.xlsx
+```
+
+**対応列名**:
+- **INCI名**: 化合物名, inci, name, compound
+- **CAS番号**: CAS, cas, CAS番号  
+- **機能**: function, 機能, 用途（デフォルト: eye_drop_ingredient）
+
 ## 実行コマンド一覧
 
 ### 1. 基本データ収集（軽量・CSV出力）
@@ -70,7 +84,9 @@ processor.process_compounds_full_data(compounds, Path('data/output'))
 # 1. 仮想環境アクティベート
 source eye_drop_env/bin/activate
 
-# 2. 入力ファイルを準備（data/input/compounds.json）
+# 2. ExcelからJSONに変換
+python3 scripts/excel_to_json.py --input data/input/your_file.xlsx
+
 # 3. 基本データ収集実行
 python3 scripts/fetch_compounds_modular.py --input data/input/compounds.json
 
@@ -84,7 +100,10 @@ ls -la data/output/compounds_basic_*.csv
 # 1. 仮想環境アクティベート  
 source eye_drop_env/bin/activate
 
-# 2. 完全データ収集
+# 2. ExcelからJSONに変換
+python3 scripts/excel_to_json.py --input data/input/your_file.xlsx
+
+# 3. 完全データ収集
 python3 -c "
 from src.data.full_data_processor import FullDataProcessor
 from pathlib import Path
@@ -97,22 +116,55 @@ processor = FullDataProcessor()
 processor.process_compounds_full_data(compounds, Path('data/output'))
 "
 
-# 3. 生成されたディレクトリを確認
+# 4. 生成されたディレクトリを確認
 ls -la data/output/individual_compounds_*/
 
-# 4. 物性値抽出実行（ディレクトリ名を実際のものに置き換え）
+# 5. 物性値抽出実行（ディレクトリ名を実際のものに置き換え）
 python3 scripts/extract_properties.py --input data/output/individual_compounds_20250910_001610/
 
-# 5. 抽出結果確認
+# 6. 抽出結果確認
 ls -la data/output/extracted_properties_*.json
 ```
 
-### C. デバッグ実行
+### C. Excel完全処理ワークフロー（推奨）
+
+```bash
+# 1. 仮想環境アクティベート
+source eye_drop_env/bin/activate
+
+# 2. ExcelをJSONに変換
+python3 scripts/excel_to_json.py --input data/input/your_compounds.xlsx
+
+# 3. 完全データ収集
+python3 -c "
+from src.data.full_data_processor import FullDataProcessor
+from pathlib import Path
+import json
+
+with open('data/input/compounds.json', 'r', encoding='utf-8') as f:
+    compounds = json.load(f)
+
+processor = FullDataProcessor()
+processor.process_compounds_full_data(compounds, Path('data/output'))
+"
+
+# 4. 物性値抽出（最新のディレクトリを自動選択）
+latest_dir=$(ls -td data/output/individual_compounds_*/ | head -1)
+python3 scripts/extract_properties.py --input "$latest_dir"
+
+# 5. 結果確認
+ls -la data/output/extracted_properties_*.json
+```
+
+### D. デバッグ・トラブルシューティング
 
 ```bash
 # 詳細ログ付きで物性値抽出
 source eye_drop_env/bin/activate
 python3 scripts/extract_properties.py --input data/output/individual_compounds_YYYYMMDD_HHMMSS/ --debug
+
+# 変換ログの確認
+cat excel_conversion.log
 ```
 
 ## 入力ファイル形式
