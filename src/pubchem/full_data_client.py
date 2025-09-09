@@ -21,28 +21,35 @@ class PubChemFullDataClient:
     
     def get_full_compound_data(self, cid: int) -> Optional[Dict]:
         """
-        CIDから化合物の完全なJSONデータを取得
+        CIDから化合物の完全なJSONデータを取得（PubChem View API使用）
+        見本データと同じRecord/Section形式で取得
         
         Args:
             cid: PubChem Compound ID
             
         Returns:
-            化合物の完全なJSONデータ、失敗時はNone
+            化合物の完全なJSONデータ（Record/Section形式）、失敗時はNone
         """
         try:
-            url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/JSON"
-            self.logger.debug(f"CID {cid}: 全データ取得開始")
+            # 正しいPubChem View APIエンドポイント
+            url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug_view/data/compound/{cid}/JSON"
+            self.logger.debug(f"CID {cid}: 全データ取得開始 (PubChem View API)")
             
             response = safe_get(url)
             data = response.json()
             
-            # レスポンスの検証
-            if "PC_Compounds" in data and len(data["PC_Compounds"]) > 0:
-                compound_data = data["PC_Compounds"][0]
-                self.logger.debug(f"CID {cid}: 全データ取得成功 ({len(json.dumps(data))} 文字)")
-                return data
+            # Record/Section形式の検証
+            if "Record" in data and "RecordNumber" in data["Record"]:
+                record_number = data["Record"]["RecordNumber"]
+                if record_number == cid:
+                    data_size = len(json.dumps(data))
+                    self.logger.debug(f"CID {cid}: 全データ取得成功 ({data_size:,} 文字, Record形式)")
+                    return data
+                else:
+                    self.logger.warning(f"CID {cid}: RecordNumber不一致 (期待: {cid}, 実際: {record_number})")
+                    return None
             else:
-                self.logger.warning(f"CID {cid}: データ形式が不正")
+                self.logger.warning(f"CID {cid}: データ形式が不正 (Record形式ではない)")
                 return None
                 
         except Exception as e:
@@ -51,7 +58,7 @@ class PubChemFullDataClient:
     
     def get_full_substance_data(self, sid: int) -> Optional[Dict]:
         """
-        SIDから物質の完全なJSONデータを取得
+        SIDから物質の完全なJSONデータを取得（PubChem View API使用）
         
         Args:
             sid: PubChem Substance ID
@@ -60,18 +67,21 @@ class PubChemFullDataClient:
             物質の完全なJSONデータ、失敗時はNone
         """
         try:
-            url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/substance/sid/{sid}/JSON"
-            self.logger.debug(f"SID {sid}: 全データ取得開始")
+            # SID用のPubChem View APIエンドポイント
+            url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug_view/data/substance/{sid}/JSON"
+            self.logger.debug(f"SID {sid}: 全データ取得開始 (PubChem View API)")
             
             response = safe_get(url)
             data = response.json()
             
-            # レスポンスの検証
-            if "PC_Substances" in data and len(data["PC_Substances"]) > 0:
-                self.logger.debug(f"SID {sid}: 全データ取得成功 ({len(json.dumps(data))} 文字)")
+            # Record形式の検証（SIDの場合も同じ構造）
+            if "Record" in data and "RecordNumber" in data["Record"]:
+                record_number = data["Record"]["RecordNumber"]
+                data_size = len(json.dumps(data))
+                self.logger.debug(f"SID {sid}: 全データ取得成功 ({data_size:,} 文字, Record形式)")
                 return data
             else:
-                self.logger.warning(f"SID {sid}: データ形式が不正")
+                self.logger.warning(f"SID {sid}: データ形式が不正 (Record形式ではない)")
                 return None
                 
         except Exception as e:
@@ -169,35 +179,70 @@ class PubChemFullDataClient:
     
     def _extract_basic_info(self, full_data: Dict) -> Dict:
         """
-        全データから基本情報を抽出
+        全データから基本情報を抽出（Record/Section形式用）
         """
         basic_info = {}
         
         try:
-            if "PC_Compounds" in full_data:
-                compound = full_data["PC_Compounds"][0]
+            if "Record" not in full_data:
+                return basic_info
                 
-                # Molecular formula
-                if "props" in compound:
-                    for prop in compound["props"]:
-                        if "urn" in prop and "label" in prop["urn"]:
-                            label = prop["urn"]["label"]
-                            if "Molecular Formula" in label and "value" in prop:
-                                if "sval" in prop["value"]:
-                                    basic_info["molecular_formula"] = prop["value"]["sval"]
-                                    break
+            record = full_data["Record"]
+            basic_info["record_type"] = record.get("RecordType", "Unknown")
+            basic_info["record_title"] = record.get("RecordTitle", "No Title")
+            
+            # Molecular Formulaを検索
+            molecular_formula = self._find_section_value(record, "Molecular Formula")
+            if molecular_formula:
+                basic_info["molecular_formula"] = molecular_formula
+            
+            # SMILES情報を検索 
+            smiles = self._find_section_value(record, "SMILES")
+            if smiles:
+                basic_info["smiles"] = smiles
                 
-                # Count atoms, bonds etc.
-                basic_info["atom_count"] = len(compound.get("atoms", {}).get("element", []))
-                if "bonds" in compound:
-                    basic_info["bond_count"] = len(compound["bonds"].get("aid1", []))
-                
-            elif "PC_Substances" in full_data:
-                substance = full_data["PC_Substances"][0]
-                basic_info["data_type"] = "substance"
-                basic_info["source"] = substance.get("source", {}).get("db", {}).get("name", "Unknown")
+            # IUPAC Nameを検索
+            iupac_name = self._find_section_value(record, "IUPAC Name")
+            if iupac_name:
+                basic_info["iupac_name"] = iupac_name
                 
         except Exception as e:
             self.logger.debug(f"基本情報抽出エラー: {e}")
         
         return basic_info
+    
+    def _find_section_value(self, record: Dict, target_heading: str) -> Optional[str]:
+        """
+        Record/Section階層から指定されたTOCHeadingの値を検索
+        """
+        try:
+            sections = record.get("Section", [])
+            return self._search_sections_recursive(sections, target_heading)
+        except Exception as e:
+            self.logger.debug(f"セクション検索エラー ({target_heading}): {e}")
+            return None
+    
+    def _search_sections_recursive(self, sections: List[Dict], target_heading: str) -> Optional[str]:
+        """
+        Section階層を再帰的に検索してTOCHeadingに一致する値を取得
+        """
+        for section in sections:
+            toc_heading = section.get("TOCHeading", "")
+            
+            # 目的のセクションが見つかった場合
+            if target_heading in toc_heading:
+                # Information配列から値を抽出
+                for info in section.get("Information", []):
+                    value = info.get("Value", {})
+                    if "StringWithMarkup" in value and value["StringWithMarkup"]:
+                        return value["StringWithMarkup"][0].get("String", "")
+                    elif "Number" in value and value["Number"]:
+                        return str(value["Number"][0])
+            
+            # 子セクションがある場合は再帰検索
+            if "Section" in section:
+                result = self._search_sections_recursive(section["Section"], target_heading)
+                if result:
+                    return result
+        
+        return None
